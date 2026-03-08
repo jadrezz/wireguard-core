@@ -1,0 +1,498 @@
+openapi: "3.0.3"
+info:
+  title: WireGuard Core API
+  description: |
+    Stateless core service for managing WireGuard peers,
+    configuration persistence and server lifecycle.
+
+    All responses include the `X-Request-ID` header (UUID) in the request to correlate logs; 
+    The server echoes it or generates a new one.
+  version: "1.0.0"
+  contact:
+    name: "Egor Gurin"
+    email: "jadrezz@icloud.com"
+    url: "t.me/jadrezz"
+
+servers:
+  - url: http://localhost:7777
+
+tags:
+  - name: Health
+    description: Service health monitoring
+  - name: Devices
+    description: WireGuard device management
+  - name: Peers
+    description: Peer CRUD and statistics
+  - name: Server
+    description: WireGuard server initialization and reset
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is healthy
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        "503":
+          description: Service is unhealthy
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: error
+                  message:
+                    type: string
+                    example: "wgctrl: failed to list devices"
+
+  /api/v1/devices:
+    get:
+      summary: List WireGuard devices
+      operationId: getAllDevices
+      tags: [Devices]
+      responses:
+        "200":
+          description: List of device names
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevicesResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/devices/{device}/peer/info:
+    get:
+      summary: Get a single peer by public key
+      description: Returns the same peer object as in the list from GET /peers, for the peer with the given public key.
+      operationId: getPeerInfo
+      tags: [Peers]
+      parameters:
+        - $ref: "#/components/parameters/DeviceName"
+        - name: public_key
+          in: query
+          required: true
+          description: Base64-encoded public key of the peer
+          schema:
+            type: string
+          example: "HIgo9xNzJMWLKASShiTqIybxR0V1tB1YBf7LnyJVtVM="
+      responses:
+        "200":
+          description: Peer with traffic stats
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeerResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Peer not found
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "peer not found"
+                status: 404
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/devices/{device}/peers:
+    get:
+      summary: List peers of a device
+      description: Returns all peers with traffic statistics and last handshake time.
+      operationId: getDevicePeers
+      tags: [Peers]
+      parameters:
+        - $ref: "#/components/parameters/DeviceName"
+      responses:
+        "200":
+          description: Peers with traffic stats
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeersResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      summary: Create a new peer
+      description: |
+        Generates a key pair, allocates a free IP address, configures the peer
+        on the WireGuard device, and returns a ready-to-use client configuration.
+      operationId: createPeer
+      tags: [Peers]
+      parameters:
+        - $ref: "#/components/parameters/DeviceName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePeerRequest"
+      responses:
+        "201":
+          description: Client configuration in WireGuard config format
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                [Interface]
+                PrivateKey = gI6EdUSYvn8ugXOt8QQD6Yc+JyiZi6DPfSoKjm8hVM=
+                Address = 10.0.0.2/32
+                DNS = 8.8.8.8
+
+                [Peer]
+                PublicKey = HIgo9xNzJMWLKASShiTqIybxR0V1tB1YBf7LnyJVtVM=
+                Endpoint = 203.0.113.1:51820
+                AllowedIPs = 0.0.0.0/0
+                PersistentKeepalive = 25
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: No free IP addresses in the subnet
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "the wireguard subnet has run out of hosts"
+                status: 409
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      summary: Remove a peer
+      operationId: removePeer
+      tags: [Peers]
+      parameters:
+        - $ref: "#/components/parameters/DeviceName"
+        - name: public_key
+          in: query
+          required: true
+          description: Base64-encoded public key of the peer
+          schema:
+            type: string
+          example: "HIgo9xNzJMWLKASShiTqIybxR0V1tB1YBf7LnyJVtVM="
+      responses:
+        "204":
+          description: Peer removed
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/devices/{device}/peers/available:
+    get:
+      summary: Count free IP addresses
+      operationId: getAvailableAddrs
+      tags: [Peers]
+      parameters:
+        - $ref: "#/components/parameters/DeviceName"
+      responses:
+        "200":
+          description: Number of free addresses
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvailableAddrsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/devices/{device}/peers/disable:
+    post:
+      summary: Disable a peer
+      description: |
+        Adds an iptables DROP rule for this peer's tunnel traffic so they
+        cannot use the VPN. The peer remains in the config; traffic is
+        dropped until enable is called.
+      operationId: disablePeer
+      tags: [Peers]
+      parameters:
+        - $ref: "#/components/parameters/DeviceName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeerPublicKeyRequest"
+      responses:
+        "204":
+          description: Peer disabled
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/devices/{device}/peers/enable:
+    post:
+      summary: Enable a peer
+      description: |
+        Removes the iptables DROP rule for this peer so they can use
+        the VPN again. The peer must have been disabled previously.
+      operationId: enablePeer
+      tags: [Peers]
+      parameters:
+        - $ref: "#/components/parameters/DeviceName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeerPublicKeyRequest"
+      responses:
+        "204":
+          description: Peer enabled
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/server/init:
+    post:
+      summary: Initialize a new WireGuard server
+      description: |
+        Generates a server key pair, writes the configuration file
+        with PostUp/PostDown masquerade rules, and brings up the interface
+        via wg-quick.
+      operationId: initServer
+      tags: [Server]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitServerRequest"
+      responses:
+        "201":
+          description: Server initialized
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/server/{device}/reset:
+    post:
+      summary: Reset a WireGuard server
+      description: |
+        Brings down the interface via wg-quick and removes the
+        configuration file.
+      operationId: resetServer
+      tags: [Server]
+      parameters:
+        - $ref: "#/components/parameters/DeviceName"
+      responses:
+        "204":
+          description: Server reset
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  headers:
+    X-Request-ID:
+      description: Request correlation ID (UUID). Echoed from the request or generated by the server.
+      schema:
+        type: string
+        format: uuid
+        example: "550e8400-e29b-41d4-a716-446655440000"
+
+  parameters:
+    DeviceName:
+      name: device
+      in: path
+      required: true
+      description: WireGuard interface name
+      schema:
+        type: string
+      example: wg0
+
+  schemas:
+    CreatePeerRequest:
+      type: object
+      required:
+        - allowed_ips
+      properties:
+        allowed_ips:
+          type: array
+          items:
+            type: string
+          description: CIDRs for the client AllowedIPs
+          example: ["0.0.0.0/0"]
+        dns:
+          type: array
+          items:
+            type: string
+          description: DNS servers (uses WG_DEFAULT_DNS if omitted)
+          example: ["8.8.8.8", "1.1.1.1"]
+
+    PeerPublicKeyRequest:
+      type: object
+      required:
+        - public_key
+      properties:
+        public_key:
+          type: string
+          description: Base64-encoded public key of the peer
+          example: "HIgo9xNzJMWLKASShiTqIybxR0V1tB1YBf7LnyJVtVM="
+
+    InitServerRequest:
+      type: object
+      required:
+        - device_name
+        - address
+        - listen_port
+      properties:
+        device_name:
+          type: string
+          description: WireGuard interface name to create
+          example: wg0
+        address:
+          type: string
+          description: Server address in CIDR notation
+          example: "10.0.0.1/24"
+        listen_port:
+          type: integer
+          description: UDP listen port
+          example: 51820
+
+    PeerResponse:
+      type: object
+      properties:
+        public_key:
+          type: string
+          example: "HIgo9xNzJMWLKASShiTqIybxR0V1tB1YBf7LnyJVtVM="
+        allowed_ips:
+          type: array
+          items:
+            type: string
+          example: ["10.0.0.2/32"]
+        endpoint:
+          type: string
+          example: "203.0.113.1:51820"
+        transmit_bytes:
+          type: integer
+          format: int64
+          example: 123456
+        receive_bytes:
+          type: integer
+          format: int64
+          example: 654321
+        last_handshake:
+          type: string
+          format: date-time
+          example: "2026-03-08T12:00:00Z"
+
+    PeersResponse:
+      type: object
+      properties:
+        peers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PeerResponse"
+
+    AvailableAddrsResponse:
+      type: object
+      properties:
+        count:
+          type: integer
+          example: 253
+
+    DevicesResponse:
+      type: object
+      properties:
+        devices:
+          type: array
+          items:
+            type: string
+          example: ["wg0"]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "this device is not wireguard's or does not exist"
+        status:
+          type: integer
+          example: 400
+
+  responses:
+    BadRequest:
+      description: Bad request
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/X-Request-ID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Internal server error
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/X-Request-ID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "Internal server error"
+            status: 500
