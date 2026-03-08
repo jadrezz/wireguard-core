@@ -30,13 +30,31 @@ Environment variables (see [config/config.go](config/config.go)):
 | `WG_EXTERNAL_IFACE` | no | `eth0` | External interface for NAT/masquerade |
 
 ## Quick start
-
+### Manual building
 ```bash
 export WG_ENDPOINT=203.0.113.1
 export WG_PORT=51820
 export WG_KEEP_ALIVE=25s
 go run ./cmd
 ```
+### Download binaries
+**You can find all binaries at the page of releases**
+
+[Release page](https://github.com/jadrezz/wireguard-core/releases)
+
+Run your application:
+```bash
+WG_ENDPOINT=203.0.113.1 \
+WG_PORT=51820 \
+WG_KEEP_ALIVE=25s \
+./wireguard-core-linux-arm64
+```
+
+### Recommendations:
+
+* Whatever way you choose, I'd recommend to run this app as
+system.md service on your server. Thus, you'll be able to handle
+logs and restart in case of fails easily
 
 Server listens on `:7777`. Open [http://localhost:7777/swagger/](http://localhost:7777/swagger/) for interactive API docs; spec at [http://localhost:7777/openapi.yaml](http://localhost:7777/openapi.yaml).
 
